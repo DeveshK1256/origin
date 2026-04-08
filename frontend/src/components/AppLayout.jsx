@@ -1,10 +1,10 @@
 import { NavLink } from "react-router-dom";
 
 const navItems = [
-  { label: "Resume Scanner", to: "/resume-scanner" },
-  { label: "Resume AI", to: "/resume-ai" },
-  { label: "Job Analyzer", to: "/job-analyzer" },
-  { label: "Fake Job Detection", to: "/fake-job-detection" }
+  { label: "Resume Scanner", to: "/app/resume-scanner" },
+  { label: "Resume AI", to: "/app/resume-ai" },
+  { label: "Job Analyzer", to: "/app/job-analyzer" },
+  { label: "Fake Job Detection", to: "/app/fake-job-detection" }
 ];
 
 function MetricPill({ label, value }) {
@@ -28,6 +28,12 @@ export default function AppLayout({ children, metrics }) {
               <p className="mt-1 text-sm text-slate-600">
                 Parse resumes, match roles, and detect high-risk job postings in one workflow.
               </p>
+              <NavLink
+                to="/"
+                className="mt-3 inline-flex rounded-lg border border-edge bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-teal-50"
+              >
+                Back To Website
+              </NavLink>
             </div>
             <div className="grid grid-cols-3 gap-3">
               <MetricPill label="Resume" value={metrics.resumeScore} />
