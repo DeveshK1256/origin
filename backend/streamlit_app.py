@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
+
+# Ensure backend-local imports work in hosted environments.
+BACKEND_DIR = Path(__file__).resolve().parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 from services.fake_job_detector import FakeJobDetector
 from services.file_extractors import (
