@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+from database import (
+    db_is_ready,
+    init_db,
+    list_resume_analysis_history,
+    save_fake_job_check,
+    save_job_analysis,
+    save_resume_ai_generation,
+    save_resume_analysis,
+)
 from services.fake_job_detector import FakeJobDetector
 from services.file_extractors import (
     allowed_resume_extension,
@@ -16,6 +26,8 @@ from services.job_recommender import recommend_jobs_for_resume
 from services.resume_ai import generate_resume_ai_assets
 from services.resume_parser import parse_resume_text
 
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB upload limit
 
@@ -23,6 +35,12 @@ cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").spli
 CORS(app, resources={r"/api/*": {"origins": cors_origins}})
 
 fake_job_detector = FakeJobDetector()
+DATABASE_ENABLED = True
+try:
+    init_db()
+except Exception:
+    DATABASE_ENABLED = False
+    logger.exception("Database initialization failed. API will continue without persistence.")
 
 
 def json_error(message: str, status_code: int = 400, details: Any = None):
@@ -39,6 +57,10 @@ def health_check():
             "status": "ok",
             "service": "AI Recruitment Intelligence API",
             "version": "1.0.0",
+            "database": {
+                "enabled": DATABASE_ENABLED,
+                "ready": db_is_ready() if DATABASE_ENABLED else False,
+            },
         }
     )
 
@@ -62,11 +84,18 @@ def resume_parse():
 
         parsed_resume = parse_resume_text(resume_text)
         recommended_jobs = recommend_jobs_for_resume(parsed_resume, limit=6)
+        record_id = save_resume_analysis(
+            source="api",
+            resume_filename=resume_file.filename,
+            parsed_resume=parsed_resume,
+            recommended_jobs=recommended_jobs,
+        )
         return jsonify(
             {
                 "resume": parsed_resume,
                 "resume_score": parsed_resume["resume_score"],
                 "recommended_jobs": recommended_jobs,
+                "record_id": record_id,
             }
         )
     except ValueError as exc:
@@ -85,7 +114,13 @@ def job_analyze():
 
     try:
         analysis = analyze_job_description(job_description)
-        return jsonify(analysis)
+        record_id = save_job_analysis(
+            source="api",
+            job_description=job_description,
+            analysis=analysis,
+            match_result=None,
+        )
+        return jsonify({**analysis, "record_id": record_id})
     except Exception as exc:  # pragma: no cover - fallback guard
         return json_error("Job description analysis failed.", status_code=500, details=str(exc))
 
@@ -133,10 +168,17 @@ def job_match():
     try:
         job_data = analyze_job_description(job_description)
         match_result = calculate_job_match(resume_data, job_data)
+        record_id = save_job_analysis(
+            source="api",
+            job_description=job_description,
+            analysis=job_data,
+            match_result=match_result,
+        )
         return jsonify(
             {
                 "match": match_result,
                 "job_analysis": job_data,
+                "record_id": record_id,
             }
         )
     except Exception as exc:  # pragma: no cover - fallback guard
@@ -154,7 +196,12 @@ def fake_job_detect():
 
     try:
         result = fake_job_detector.analyze(job_url=job_url, fallback_text=job_text)
-        return jsonify(result)
+        record_id = save_fake_job_check(
+            source="api",
+            job_url=job_url or None,
+            result=result,
+        )
+        return jsonify({**result, "record_id": record_id})
     except ValueError as exc:
         return json_error(str(exc))
     except Exception as exc:  # pragma: no cover - fallback guard
@@ -182,6 +229,18 @@ def recommend_jobs():
         return jsonify({"recommended_jobs": recommendations})
     except Exception as exc:  # pragma: no cover - fallback guard
         return json_error("Job recommendation failed.", status_code=500, details=str(exc))
+
+
+@app.route("/api/resume/history", methods=["GET"])
+def resume_history():
+    limit_raw = (request.args.get("limit") or "20").strip()
+    try:
+        limit = max(1, min(200, int(limit_raw)))
+    except ValueError:
+        return json_error("Invalid 'limit'. Provide an integer between 1 and 200.")
+
+    records = list_resume_analysis_history(limit=limit)
+    return jsonify({"history": records, "count": len(records)})
 
 
 @app.route("/api/resume-ai/generate", methods=["POST"])
@@ -212,7 +271,12 @@ def resume_ai_generate():
             scratch_profile=scratch_profile if source_mode == "scratch" else None,
             resume_parsed=resume_data if source_mode == "existing" else None,
         )
-        return jsonify(result)
+        record_id = save_resume_ai_generation(
+            source="api",
+            source_mode=source_mode,
+            result=result,
+        )
+        return jsonify({**result, "record_id": record_id})
     except ValueError as exc:
         return json_error(str(exc))
     except Exception as exc:  # pragma: no cover - fallback guard

@@ -15,6 +15,14 @@ BACKEND_DIR = Path(__file__).resolve().parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from database import (
+    init_db,
+    list_resume_analysis_history,
+    save_fake_job_check,
+    save_job_analysis,
+    save_resume_ai_generation,
+    save_resume_analysis,
+)
 from services.fake_job_detector import FakeJobDetector
 from services.file_extractors import (
     allowed_resume_extension,
@@ -61,6 +69,15 @@ def _initialize_state() -> None:
 @st.cache_resource(show_spinner=False)
 def _load_detector() -> FakeJobDetector:
     return FakeJobDetector()
+
+
+@st.cache_resource(show_spinner=False)
+def _init_database() -> bool:
+    try:
+        init_db()
+        return True
+    except Exception:
+        return False
 
 
 def _build_resume_report(resume: dict, resume_score: int | None, recommended_jobs: list[dict[str, Any]] | None = None) -> str:
@@ -302,9 +319,67 @@ def _render_resume_scanner() -> None:
             st.session_state.resume_data = parsed
             st.session_state.resume_score = parsed.get("resume_score")
             st.session_state.recommended_jobs = recommend_jobs_for_resume(parsed, limit=6)
+            save_resume_analysis(
+                source="streamlit",
+                resume_filename=uploaded_resume.name if uploaded_resume else None,
+                parsed_resume=parsed,
+                recommended_jobs=st.session_state.recommended_jobs,
+            )
             st.success("Resume parsed successfully.")
         except Exception as exc:
             st.error(str(exc))
+
+    st.subheader("Resume Scan History")
+    history = list_resume_analysis_history(limit=20)
+    if history:
+        history_rows = []
+        option_map: dict[str, dict[str, Any]] = {}
+        for record in history:
+            created_at = str(record.get("created_at") or "Unknown time")
+            candidate_name = record.get("candidate_name") or "Unknown candidate"
+            resume_score = record.get("resume_score")
+            score_text = f"{resume_score}%" if resume_score is not None else "N/A"
+            source = record.get("source") or "unknown"
+            resume_filename = record.get("resume_filename") or "N/A"
+            record_id = str(record.get("id") or "")
+            short_id = record_id[:8] if record_id else "no-id"
+
+            history_rows.append(
+                {
+                    "Time (UTC)": created_at,
+                    "Candidate": candidate_name,
+                    "Score": score_text,
+                    "Source": source,
+                    "File": resume_filename,
+                }
+            )
+
+            label = f"{created_at} | {candidate_name} | {score_text} | {short_id}"
+            option_map[label] = record
+
+        st.dataframe(history_rows, use_container_width=True, hide_index=True)
+        selected_label = st.selectbox(
+            "Load a previous resume scan",
+            options=list(option_map.keys()),
+            key="resume_history_select",
+        )
+        if st.button("Load Selected History", key="resume_history_load_btn"):
+            selected_record = option_map.get(selected_label) or {}
+            payload = selected_record.get("payload") or {}
+            previous_resume = payload.get("resume")
+            previous_jobs = payload.get("recommended_jobs") or []
+
+            if isinstance(previous_resume, dict):
+                st.session_state.resume_data = previous_resume
+                st.session_state.resume_score = previous_resume.get("resume_score")
+                st.session_state.recommended_jobs = (
+                    previous_jobs if isinstance(previous_jobs, list) else []
+                )
+                st.success("History loaded into Resume Scanner.")
+            else:
+                st.error("Selected history record does not contain valid resume data.")
+    else:
+        st.info("No resume scan history yet. Parse a resume to start building history.")
 
     if st.session_state.resume_data:
         resume = st.session_state.resume_data
@@ -530,6 +605,13 @@ def _render_job_analyzer() -> None:
                 st.success("Job analysis and match score computed.")
             else:
                 st.warning("Job analyzed. Upload or parse a resume to get match score.")
+
+            save_job_analysis(
+                source="streamlit",
+                job_description=job_description.strip(),
+                analysis=job_analysis,
+                match_result=st.session_state.match_data if resume_payload is not None else None,
+            )
         except Exception as exc:
             st.error(str(exc))
 
@@ -637,6 +719,11 @@ def _render_fake_job_detection() -> None:
                 )
             st.session_state.fake_job_data = result
             st.session_state.scam_risk = result.get("scam_probability")
+            save_fake_job_check(
+                source="streamlit",
+                job_url=job_url.strip() or None,
+                result=result,
+            )
             st.success("Fake job analysis completed.")
         except Exception as exc:
             st.error(str(exc))
@@ -806,6 +893,11 @@ def _render_resume_ai() -> None:
                 )
 
             st.session_state.resume_ai_result = result
+            save_resume_ai_generation(
+                source="streamlit",
+                source_mode=source_mode,
+                result=result,
+            )
             st.success("Resume AI assets generated successfully.")
         except Exception as exc:
             st.error(str(exc))
@@ -864,11 +956,13 @@ def main() -> None:
         layout="wide",
     )
     _initialize_state()
+    db_ready = _init_database()
 
     st.title("AI Recruitment Intelligence Platform")
     st.caption(
         "Streamlit edition: parse resumes, analyze job fit, and detect fake job risk in one workspace."
     )
+    st.sidebar.caption(f"Database: {'connected' if db_ready else 'unavailable'}")
 
     page = st.sidebar.radio(
         "Navigation",

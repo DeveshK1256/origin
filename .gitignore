@@ -13,3 +13,13 @@ backend/.env
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+
+# Runtime database and local test artifacts
+backend/db/
+backend/data/
+backend/.runtime_db/
+*.db
+*.db-journal
+streamlit_out.log
+streamlit_err.log
+backend/json_test.txt
