@@ -1,0 +1,11 @@
+﻿__pycache__/
+*.py[cod]
+*.pyo
+*.log
+.env
+.env.*
+.venv/
+venv/
+.runtime_db/
+db/
+data/

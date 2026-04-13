@@ -1,23 +1,21 @@
-# AI Recruitment Intelligence Platform
+﻿# AI Recruitment Intelligence Platform
 
-Full-stack recruitment intelligence system with:
-- Resume parsing (skills, experience, education) using spaCy + keyword extraction
-- Domain-wise employability probability from resume analysis
-- Resume overview and downloadable analyzed report (TXT/JSON) in Resume Scanner
-- Resume-to-job matching score
-- Fake job detection using a trained ML model
-- Enhanced JD analyzer insights (role family, seniority, required/preferred skills, JD quality)
-- Hybrid fake-job scoring (ML + rule signals with risk drivers and confidence)
-- ATS-style React dashboard for operational visibility
-- Streamlit dashboard/workbench for local all-in-one usage
+AI-powered recruitment workspace with:
+- Resume parsing and scoring
+- Resume-to-job matching
+- Fake job detection (Hugging Face + local ML fallback)
+- Resume AI generation (LaTeX + DOCX)
+- Resume scan history
+- Supabase-backed auth and database
 
-## Tech Stack
+## Architecture
 
-- Frontend: React + Vite + Tailwind CSS
-- Backend: Flask REST API
-- Local UI alternative: Streamlit
-- ML: scikit-learn RandomForest classifier (trained artifact included)
-- File parsing: PyPDF2, python-docx
+- Frontend: React + Vite + Tailwind (deploy on Cloudflare Pages)
+- Backend: Flask API (deploy on Fly.io)
+- Auth: Supabase Auth (JWT bearer tokens)
+- Database: Supabase Postgres (with local JSON fallback)
+- ML: Hugging Face inference API + local model fallback
+- Job Data: Adzuna API + scraping fallback
 
 ## Project Structure
 
@@ -25,72 +23,75 @@ Full-stack recruitment intelligence system with:
 .
 |-- backend
 |   |-- app.py
-|   |-- streamlit_app.py
+|   |-- auth.py
+|   |-- database.py
+|   |-- Dockerfile
+|   |-- fly.toml
 |   |-- requirements.txt
-|   |-- Procfile
 |   |-- .env.example
-|   |-- ml
-|   |   |-- feature_engineering.py
-|   |   |-- train_fake_job_model.py
-|   |   `-- fake_job_model.joblib
-|   `-- services
-|       |-- fake_job_detector.py
-|       |-- file_extractors.py
-|       |-- job_matching.py
-|       |-- nlp_utils.py
-|       `-- resume_parser.py
+|   |-- services/
+|   |   |-- fake_job_detector.py
+|   |   |-- job_data_provider.py
+|   |   |-- job_recommender.py
+|   |   `-- ...
+|   `-- supabase/
+|       `-- schema.sql
 |-- frontend
 |   |-- package.json
-|   |-- vercel.json
+|   |-- wrangler.toml
 |   |-- .env.example
-|   `-- src
-|       |-- App.jsx
-|       |-- main.jsx
-|       |-- index.css
-|       |-- api/client.js
-|       |-- components/*
-|       `-- pages/*
-|-- render.yaml
+|   |-- public/_redirects
+|   `-- src/
+|       |-- auth/supabaseClient.js
+|       |-- components/AuthGate.jsx
+|       `-- ...
 `-- README.md
 ```
 
-## Backend Setup (Local)
+## 1) Supabase Setup
+
+1. Create a Supabase project.
+2. Open SQL Editor and run:
+   - `backend/supabase/schema.sql`
+3. In Supabase Auth, enable Email/Password provider.
+4. Collect:
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+
+## 2) Backend Local Setup
 
 ```powershell
 cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python -m spacy download en_core_web_sm
-python ml/train_fake_job_model.py
+copy .env.example .env
 python app.py
 ```
 
-Backend runs at: `http://localhost:5000`
+Backend: `http://localhost:5000`
 
-## Streamlit Setup (Local)
+### Backend env vars
 
-Run the platform directly in Streamlit (no React dev server required):
+- `CORS_ORIGINS=http://localhost:5173`
+- `DATABASE_BACKEND=auto` (`supabase`, `local`, or `auto`)
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `AUTH_MODE=auto` (`required`, `optional`, `off`, `auto`)
+- `ADZUNA_APP_ID`
+- `ADZUNA_APP_KEY`
+- `JOB_REQUEST_TRUST_ENV=0` (set `1` only if your server must use system proxy env vars)
+- `HF_API_TOKEN`
+- `HF_FAKE_JOB_MODEL_ID`
 
-```powershell
-cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python -m spacy download en_core_web_sm
-python ml/train_fake_job_model.py
-python -m streamlit run streamlit_app.py
-```
+Notes:
+- If Supabase is missing/unavailable, database writes/reads fall back to local JSON storage.
+- If Hugging Face is missing/unavailable, fake-job scoring uses local model only.
+- If Adzuna is missing/unavailable, jobs fall back to scraping and local catalog.
 
-Streamlit runs at: `http://localhost:8501`
-
-Includes:
-- Dashboard
-- Resume Scanner (PDF/DOCX/TXT upload)
-- Job Description Analyzer
-- Fake Job Detection
-
-## Frontend Setup (Local)
+## 3) Frontend Local Setup
 
 ```powershell
 cd frontend
@@ -99,63 +100,84 @@ copy .env.example .env
 npm run dev
 ```
 
-Frontend runs at: `http://localhost:5173`
+Frontend: `http://localhost:5173`
 
-Set `VITE_API_BASE_URL` in `frontend/.env` if backend URL changes.
+### Frontend env vars
+
+- `VITE_API_BASE_URL=http://localhost:5000`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+If Supabase env vars are present, users must sign in before using the app.
+
+## 4) Deploy Frontend to Cloudflare Pages
+
+Project settings:
+- Framework preset: `Vite`
+- Root directory: `frontend`
+- Build command: `npm run build`
+- Build output directory: `dist`
+
+Set environment variables in Cloudflare Pages:
+- `VITE_API_BASE_URL=https://<your-fly-backend-domain>`
+- `VITE_SUPABASE_URL=<your-supabase-url>`
+- `VITE_SUPABASE_ANON_KEY=<your-supabase-anon-key>`
+
+Files already added:
+- `frontend/wrangler.toml`
+- `frontend/public/_redirects` (SPA routing)
+
+## 5) Deploy Backend to Fly.io
+
+1. Install Fly CLI and login.
+2. From `backend` folder:
+
+```powershell
+flyctl launch --no-deploy
+```
+
+3. Set secrets:
+
+```powershell
+flyctl secrets set \
+  CORS_ORIGINS=https://<your-cloudflare-domain> \
+  SUPABASE_URL=<your-supabase-url> \
+  SUPABASE_ANON_KEY=<your-supabase-anon-key> \
+  SUPABASE_SERVICE_ROLE_KEY=<your-supabase-service-role-key> \
+  AUTH_MODE=auto \
+  DATABASE_BACKEND=supabase \
+  ADZUNA_APP_ID=<your-adzuna-id> \
+  ADZUNA_APP_KEY=<your-adzuna-key> \
+  HF_API_TOKEN=<your-hf-token> \
+  HF_FAKE_JOB_MODEL_ID=<your-hf-model-id>
+```
+
+4. Deploy:
+
+```powershell
+flyctl deploy
+```
+
+Files already added:
+- `backend/Dockerfile`
+- `backend/fly.toml`
+- `backend/.dockerignore`
 
 ## API Endpoints
 
 - `GET /api/health`
-- `POST /api/resume/parse` (multipart: `resume`)
-  - Includes `domain_analysis` with strongest domain tendency, per-domain probability, and missing skills
-- `POST /api/job/analyze` (json: `job_description`)
+- `POST /api/resume/parse`
+- `GET /api/resume/history`
+- `POST /api/job/analyze`
 - `POST /api/job/match`
-  - multipart: `resume`, `job_description`
-  - or json: `job_description` + `resume_parsed` or `resume_text`
-- `POST /api/fake-job/detect` (json: `job_url`, optional `job_text`)
+- `POST /api/jobs/recommend`
+- `POST /api/fake-job/detect`
+- `POST /api/resume-ai/generate`
 
-## Fake Job ML Model
-
-The fake job model uses engineered features including:
-- Salary anomalies
-- Missing company info
-- Suspicious keywords
-- Urgent language patterns
-- Free email contact usage
-- URL suspiciousness
-
-Trained artifact file:
-- `backend/ml/fake_job_model.joblib`
-
-Retrain anytime:
+## Optional Streamlit
 
 ```powershell
-cd backend
-python ml/train_fake_job_model.py
+python -m streamlit run backend/streamlit_app.py
 ```
 
-## Deployment
-
-### Frontend -> Vercel
-
-1. Import `frontend` as a Vercel project.
-2. Build command: `npm run build`
-3. Output directory: `dist`
-4. Set env var: `VITE_API_BASE_URL=https://<your-render-backend>.onrender.com`
-
-### Backend -> Render
-
-Use the included `render.yaml` (Blueprint deploy) or configure manually:
-- Root Directory: `backend`
-- Build Command:
-  - `pip install -r requirements.txt && python -m spacy download en_core_web_sm && python ml/train_fake_job_model.py`
-- Start Command:
-  - `gunicorn app:app`
-- Environment Variable:
-  - `CORS_ORIGINS=https://<your-vercel-app>.vercel.app`
-
-## Notes
-
-- Resume parsing supports PDF, DOCX, and TXT uploads.
-- Fake-job URL scraping may fail on heavily protected pages; submit fallback `job_text` when needed.
-- Dashboard metrics persist in browser localStorage for quick ATS-style tracking.
+Streamlit is local utility UI and does not require frontend auth.

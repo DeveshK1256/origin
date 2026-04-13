@@ -16,7 +16,7 @@ function MetricPill({ label, value }) {
   );
 }
 
-export default function AppLayout({ children, metrics }) {
+export default function AppLayout({ children, metrics, userEmail, onSignOut, authEnabled }) {
   return (
     <div className="min-h-screen bg-mist text-ink">
       <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 pb-8 pt-6 md:px-8">
@@ -35,6 +35,20 @@ export default function AppLayout({ children, metrics }) {
               <MetricPill label="Scam Risk" value={metrics.scamRisk} />
             </div>
           </div>
+          {authEnabled ? (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-edge bg-white/80 px-3 py-2 text-xs text-slate-600">
+              <p>
+                Signed in as <span className="font-semibold text-slate-800">{userEmail || "Authenticated user"}</span>
+              </p>
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="rounded-lg bg-slate-800 px-3 py-1.5 font-semibold text-white transition hover:bg-slate-900"
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : null}
         </header>
 
         <div className="grid gap-5 lg:grid-cols-[260px,1fr]">

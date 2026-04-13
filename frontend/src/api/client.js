@@ -1,7 +1,24 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+let authTokenProvider = null;
+
+export function configureApiAuth(tokenProvider) {
+  authTokenProvider = typeof tokenProvider === "function" ? tokenProvider : null;
+}
+
+function buildHeaders(baseHeaders = {}) {
+  const headers = { ...baseHeaders };
+  const token = authTokenProvider ? authTokenProvider() : null;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, options);
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(options.headers || {})
+  });
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
@@ -20,7 +37,7 @@ export async function parseResume(file) {
 export async function analyzeJobDescription(jobDescription) {
   return request("/api/job/analyze", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ job_description: jobDescription })
   });
 }
@@ -35,7 +52,7 @@ export async function matchJob({ jobDescription, resumeFile, resumeParsed, resum
 
   return request("/api/job/match", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       job_description: jobDescription,
       resume_parsed: resumeParsed,
@@ -47,7 +64,7 @@ export async function matchJob({ jobDescription, resumeFile, resumeParsed, resum
 export async function detectFakeJob({ jobUrl, jobText }) {
   return request("/api/fake-job/detect", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       job_url: jobUrl,
       job_text: jobText
@@ -64,7 +81,7 @@ export async function generateResumeAI({
 }) {
   return request("/api/resume-ai/generate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       source_mode: sourceMode,
       job_description: jobDescription,
@@ -73,4 +90,8 @@ export async function generateResumeAI({
       resume_text: resumeText
     })
   });
+}
+
+export async function fetchResumeHistory(limit = 20) {
+  return request(`/api/resume/history?limit=${Math.max(1, Math.min(100, Number(limit) || 20))}`);
 }

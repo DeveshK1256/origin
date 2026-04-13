@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { configureApiAuth } from "./api/client";
+import { supabase, isSupabaseEnabled } from "./auth/supabaseClient";
+import AuthGate from "./components/AuthGate";
 import AppLayout from "./components/AppLayout";
 import FakeJobDetectionPage from "./pages/FakeJobDetectionPage";
 import JobAnalyzerPage from "./pages/JobAnalyzerPage";
@@ -30,10 +33,40 @@ function loadStoredState() {
 
 export default function App() {
   const [platformState, setPlatformState] = useState(loadStoredState);
+  const [session, setSession] = useState(null);
+  const [authBootstrapped, setAuthBootstrapped] = useState(!isSupabaseEnabled);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(platformState));
   }, [platformState]);
+
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase) {
+      configureApiAuth(() => null);
+      return undefined;
+    }
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!error) {
+        setSession(data.session || null);
+      }
+      setAuthBootstrapped(true);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession || null);
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    configureApiAuth(() => session?.access_token || null);
+  }, [session]);
 
   const updatePlatformState = (partialUpdate) => {
     setPlatformState((prev) => ({
@@ -52,8 +85,62 @@ export default function App() {
     [platformState.resumeScore, platformState.jobMatch, platformState.scamRisk]
   );
 
+  const handleSignIn = async (email, password) => {
+    if (!supabase) return;
+    setAuthError("");
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setAuthError(error.message || "Sign-in failed.");
+    }
+    setAuthLoading(false);
+  };
+
+  const handleSignUp = async (email, password) => {
+    if (!supabase) return;
+    setAuthError("");
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      setAuthError(error.message || "Sign-up failed.");
+    } else {
+      setAuthError("Signup successful. Check your email if confirmation is required.");
+    }
+    setAuthLoading(false);
+  };
+
+  const handleSignOut = async () => {
+    if (!supabase) return;
+    setAuthError("");
+    await supabase.auth.signOut();
+  };
+
+  if (!authBootstrapped) {
+    return (
+      <div className="min-h-screen bg-mist p-8 text-center text-slate-700">
+        Loading authentication...
+      </div>
+    );
+  }
+
+  if (isSupabaseEnabled && !session) {
+    return (
+      <AuthGate
+        onSignIn={handleSignIn}
+        onSignUp={handleSignUp}
+        loading={authLoading}
+        authError={authError}
+      />
+    );
+  }
+
   return (
-    <AppLayout metrics={summaryMetrics}>
+    <AppLayout
+      metrics={summaryMetrics}
+      authEnabled={isSupabaseEnabled}
+      userEmail={session?.user?.email || ""}
+      onSignOut={handleSignOut}
+    >
       <Routes>
         <Route path="/" element={<Navigate to="/resume-scanner" replace />} />
         <Route

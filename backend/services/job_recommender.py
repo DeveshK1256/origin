@@ -1,15 +1,17 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from math import ceil
 from typing import Any
 from urllib.parse import urlencode
 
-JOB_CATALOG: list[dict[str, Any]] = [
+from services.job_data_provider import fetch_job_posts
+
+LOCAL_JOB_CATALOG: list[dict[str, Any]] = [
     {
-        "job_id": "J-1001",
+        "job_id": "L-1001",
         "title": "Backend Engineer (Python)",
-        "company": "Northwind Technologies",
-        "job_link": "https://careers.northwindtech.com/jobs/J-1001",
+        "company": "Local Reference Role",
+        "job_link": "",
         "domain": "Backend Engineering",
         "employment_type": "Full-time",
         "location": "Remote",
@@ -17,12 +19,13 @@ JOB_CATALOG: list[dict[str, Any]] = [
         "min_experience_years": 3,
         "required_skills": ["Python", "Flask", "FastAPI", "SQL", "Docker", "REST API"],
         "preferred_skills": ["AWS", "CI/CD", "Microservices"],
+        "source": "local",
     },
     {
-        "job_id": "J-1002",
+        "job_id": "L-1002",
         "title": "Senior Platform Engineer",
-        "company": "Delta Systems Inc",
-        "job_link": "https://careers.deltasystemsinc.com/jobs/J-1002",
+        "company": "Local Reference Role",
+        "job_link": "",
         "domain": "DevOps and Cloud",
         "employment_type": "Full-time",
         "location": "Hybrid",
@@ -30,12 +33,13 @@ JOB_CATALOG: list[dict[str, Any]] = [
         "min_experience_years": 5,
         "required_skills": ["Docker", "Kubernetes", "AWS", "Linux", "CI/CD", "Terraform"],
         "preferred_skills": ["Jenkins", "GitHub Actions", "Microservices"],
+        "source": "local",
     },
     {
-        "job_id": "J-1003",
+        "job_id": "L-1003",
         "title": "Data Analyst",
-        "company": "Apex Business Labs",
-        "job_link": "https://careers.apexbusinesslabs.com/jobs/J-1003",
+        "company": "Local Reference Role",
+        "job_link": "",
         "domain": "Data Analytics and BI",
         "employment_type": "Full-time",
         "location": "On-site",
@@ -43,73 +47,18 @@ JOB_CATALOG: list[dict[str, Any]] = [
         "min_experience_years": 2,
         "required_skills": ["SQL", "Python", "Power BI", "Tableau", "Data Analysis"],
         "preferred_skills": ["Excel", "Pandas", "NumPy"],
-    },
-    {
-        "job_id": "J-1004",
-        "title": "Machine Learning Engineer",
-        "company": "Nimbus AI",
-        "job_link": "https://careers.nimbusai.com/jobs/J-1004",
-        "domain": "Data Science and ML",
-        "employment_type": "Full-time",
-        "location": "Remote",
-        "salary_range": "$130,000 - $170,000",
-        "min_experience_years": 3,
-        "required_skills": ["Python", "Machine Learning", "Scikit-learn", "NLP", "SQL"],
-        "preferred_skills": ["TensorFlow", "PyTorch", "Deep Learning"],
-    },
-    {
-        "job_id": "J-1005",
-        "title": "Frontend Engineer (React)",
-        "company": "Orbit Commerce",
-        "job_link": "https://careers.orbitcommerce.com/jobs/J-1005",
-        "domain": "Frontend Engineering",
-        "employment_type": "Full-time",
-        "location": "Hybrid",
-        "salary_range": "$105,000 - $140,000",
-        "min_experience_years": 2,
-        "required_skills": ["React", "JavaScript", "TypeScript", "HTML", "CSS"],
-        "preferred_skills": ["Next.js", "Tailwind", "Node.js"],
-    },
-    {
-        "job_id": "J-1006",
-        "title": "Cloud Support Engineer",
-        "company": "Brightline Cloud",
-        "job_link": "https://careers.brightlinecloud.com/jobs/J-1006",
-        "domain": "DevOps and Cloud",
-        "employment_type": "Full-time",
-        "location": "Remote",
-        "salary_range": "$95,000 - $125,000",
-        "min_experience_years": 2,
-        "required_skills": ["AWS", "Linux", "Docker", "SQL"],
-        "preferred_skills": ["Terraform", "Kubernetes", "CI/CD"],
-    },
-    {
-        "job_id": "J-1007",
-        "title": "Backend API Developer",
-        "company": "Vertex Labs",
-        "job_link": "https://careers.vertexlabs.com/jobs/J-1007",
-        "domain": "Backend Engineering",
-        "employment_type": "Contract",
-        "location": "Remote",
-        "salary_range": "$55/hr - $80/hr",
-        "min_experience_years": 2,
-        "required_skills": ["Python", "REST API", "FastAPI", "SQL"],
-        "preferred_skills": ["Docker", "PostgreSQL", "AWS"],
-    },
-    {
-        "job_id": "J-1008",
-        "title": "BI Reporting Analyst",
-        "company": "Summit Insights",
-        "job_link": "https://careers.summitinsights.com/jobs/J-1008",
-        "domain": "Data Analytics and BI",
-        "employment_type": "Full-time",
-        "location": "Hybrid",
-        "salary_range": "$80,000 - $102,000",
-        "min_experience_years": 1,
-        "required_skills": ["Power BI", "SQL", "Excel", "Data Analysis"],
-        "preferred_skills": ["Python", "Tableau"],
+        "source": "local",
     },
 ]
+
+DOMAIN_QUERY_HINTS = {
+    "backend engineering": "Backend Engineer",
+    "frontend engineering": "Frontend Engineer",
+    "devops and cloud": "DevOps Engineer",
+    "data analytics and bi": "Data Analyst",
+    "data science and ml": "Machine Learning Engineer",
+    "general": "Software Engineer",
+}
 
 
 def _score_label(score: int) -> str:
@@ -130,6 +79,10 @@ def _experience_fit(candidate_years: int, required_years: int) -> float:
 
 
 def _build_job_link(job: dict[str, Any]) -> str:
+    existing_link = str(job.get("job_link") or "").strip()
+    if existing_link.startswith("http"):
+        return existing_link
+
     title = str(job.get("title", "")).strip() or "Software Engineer"
     location_label = str(job.get("location", "")).strip().lower()
     required_skills = [str(skill).strip() for skill in job.get("required_skills", []) if skill]
@@ -153,15 +106,100 @@ def _build_fallback_job_link(job: dict[str, Any]) -> str:
     return f"https://www.google.com/search?{urlencode(params)}"
 
 
+def _build_search_query(resume_data: dict[str, Any]) -> str:
+    strongest_domain = str(
+        ((resume_data.get("domain_analysis") or {}).get("strongest_domain") or "")
+    ).strip()
+    top_skills = [str(skill).strip() for skill in resume_data.get("skills", []) if skill][:4]
+
+    query_parts = []
+    if strongest_domain:
+        query_parts.append(strongest_domain)
+    if top_skills:
+        query_parts.append(" ".join(top_skills))
+    if not query_parts:
+        query_parts.append("software engineer")
+
+    return " ".join(query_parts).strip()
+
+
+def _build_search_queries(resume_data: dict[str, Any]) -> list[str]:
+    strongest_domain = str(
+        ((resume_data.get("domain_analysis") or {}).get("strongest_domain") or "")
+    ).strip()
+    strongest_domain_key = strongest_domain.lower()
+    domain_hint = DOMAIN_QUERY_HINTS.get(strongest_domain_key, "")
+
+    top_skills = [str(skill).strip() for skill in resume_data.get("skills", []) if skill][:6]
+    queries: list[str] = []
+
+    primary_query = _build_search_query(resume_data)
+    if primary_query:
+        queries.append(primary_query)
+
+    if strongest_domain and top_skills:
+        queries.append(f"{strongest_domain} {' '.join(top_skills[:3])}")
+    if domain_hint and top_skills:
+        queries.append(f"{domain_hint} {' '.join(top_skills[:3])}")
+        queries.append(f"{domain_hint} remote")
+    if top_skills:
+        queries.append(f"{' '.join(top_skills[:2])} jobs")
+        queries.append(f"{top_skills[0]} jobs")
+    if domain_hint:
+        queries.append(domain_hint)
+    queries.append("Software Engineer")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        normalized = " ".join(query.split()).strip()
+        if len(normalized) < 3:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(normalized)
+
+    return deduped[:8]
+
+
+def _job_catalog_for_resume(resume_data: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    target_dynamic_count = max(20, limit * 4)
+    collected: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for query in _build_search_queries(resume_data):
+        dynamic_jobs = fetch_job_posts(query=query, limit=target_dynamic_count)
+        for job in dynamic_jobs:
+            unique_key = str(job.get("job_id") or job.get("job_link") or "").strip().lower()
+            if not unique_key:
+                unique_key = str(job.get("title") or "").strip().lower()
+            if not unique_key or unique_key in seen_ids:
+                continue
+            seen_ids.add(unique_key)
+            collected.append(job)
+
+        if len(collected) >= target_dynamic_count:
+            break
+
+    if collected:
+        return collected
+
+    return LOCAL_JOB_CATALOG
+
+
 def recommend_jobs_for_resume(resume_data: dict[str, Any], limit: int = 6) -> list[dict[str, Any]]:
-    resume_skills = {skill.lower() for skill in resume_data.get("skills", [])}
+    resume_skills = {str(skill).lower() for skill in resume_data.get("skills", [])}
     candidate_years = int(resume_data.get("experience_years", 0))
-    strongest_domain = ((resume_data.get("domain_analysis") or {}).get("strongest_domain") or "").lower()
+    strongest_domain = (
+        ((resume_data.get("domain_analysis") or {}).get("strongest_domain") or "").lower()
+    )
 
     recommendations: list[dict[str, Any]] = []
-    for job in JOB_CATALOG:
-        required = [skill.lower() for skill in job.get("required_skills", [])]
-        preferred = [skill.lower() for skill in job.get("preferred_skills", [])]
+    for job in _job_catalog_for_resume(resume_data, limit=limit):
+        required = [str(skill).lower() for skill in job.get("required_skills", []) if skill]
+        preferred = [str(skill).lower() for skill in job.get("preferred_skills", []) if skill]
 
         required_overlap = [skill for skill in required if skill in resume_skills]
         required_missing = [skill for skill in required if skill not in resume_skills]
@@ -170,7 +208,7 @@ def recommend_jobs_for_resume(resume_data: dict[str, Any], limit: int = 6) -> li
         required_score = len(required_overlap) / max(1, len(required))
         preferred_score = len(preferred_overlap) / max(1, len(preferred)) if preferred else required_score
         experience_score = _experience_fit(candidate_years, int(job.get("min_experience_years", 0)))
-        domain_score = 1.0 if strongest_domain and strongest_domain == job.get("domain", "").lower() else 0.65
+        domain_score = 1.0 if strongest_domain and strongest_domain == str(job.get("domain", "")).lower() else 0.65
 
         fit = (
             (required_score * 0.55)
@@ -179,11 +217,9 @@ def recommend_jobs_for_resume(resume_data: dict[str, Any], limit: int = 6) -> li
             + (domain_score * 0.10)
         )
         fit_score = int(round(max(0.0, min(100.0, fit * 100))))
-        minimum_required_matches = max(2, ceil(len(required) * 0.45))
+        minimum_required_matches = max(1, ceil(len(required) * 0.4))
         meets_requirements = (
-            len(required_overlap) >= minimum_required_matches
-            and experience_score >= 0.5
-            and fit_score >= 50
+            len(required_overlap) >= minimum_required_matches and experience_score >= 0.4 and fit_score >= 45
         )
 
         reasons: list[str] = []
@@ -198,24 +234,33 @@ def recommend_jobs_for_resume(resume_data: dict[str, Any], limit: int = 6) -> li
 
         recommendations.append(
             {
-                "job_id": job["job_id"],
-                "title": job["title"],
-                "company": job["company"],
+                "job_id": str(job.get("job_id") or job.get("job_link") or job.get("title")),
+                "title": str(job.get("title") or "Role"),
+                "company": str(job.get("company") or "Unknown Company"),
                 "job_link": _build_job_link(job),
                 "job_link_fallback": _build_fallback_job_link(job),
-                "domain": job["domain"],
-                "employment_type": job["employment_type"],
-                "location": job["location"],
-                "salary_range": job["salary_range"],
-                "min_experience_years": job["min_experience_years"],
+                "domain": str(job.get("domain") or "General"),
+                "employment_type": str(job.get("employment_type") or "Full-time"),
+                "location": str(job.get("location") or "United States"),
+                "salary_range": str(job.get("salary_range") or "Not specified"),
+                "min_experience_years": int(job.get("min_experience_years") or 0),
                 "fit_score": fit_score,
                 "fit_label": _score_label(fit_score),
-                "matched_required_skills": [skill for skill in job["required_skills"] if skill.lower() in resume_skills],
-                "missing_required_skills": [skill for skill in job["required_skills"] if skill.lower() not in resume_skills],
+                "matched_required_skills": [
+                    skill
+                    for skill in job.get("required_skills", [])
+                    if str(skill).lower() in resume_skills
+                ],
+                "missing_required_skills": [
+                    skill
+                    for skill in job.get("required_skills", [])
+                    if str(skill).lower() not in resume_skills
+                ],
                 "required_coverage": int(round(required_score * 100)),
                 "preferred_coverage": int(round(preferred_score * 100)),
                 "meets_requirements": meets_requirements,
                 "reasons": reasons,
+                "source": str(job.get("source") or "local"),
             }
         )
 
@@ -227,9 +272,9 @@ def recommend_jobs_for_resume(resume_data: dict[str, Any], limit: int = 6) -> li
     fallback = [
         item
         for item in recommendations
-        if item["fit_score"] >= 45 and len(item["matched_required_skills"]) >= 2
+        if item["fit_score"] >= 45 and len(item["matched_required_skills"]) >= 1
     ]
     if fallback:
         return fallback[:limit]
 
-    return recommendations[: min(3, limit)]
+    return recommendations[: max(1, min(3, limit))]

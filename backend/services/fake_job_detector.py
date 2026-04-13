@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,9 @@ class FakeJobDetector:
         self.model = None
         self.feature_names = FEATURE_NAMES
         self.model_metrics: dict[str, Any] = {}
+        self.hf_model_id = os.getenv("HF_FAKE_JOB_MODEL_ID", "").strip()
+        self.hf_api_token = os.getenv("HF_API_TOKEN", "").strip()
+        self.hf_timeout_seconds = int(os.getenv("HF_TIMEOUT_SECONDS", "12"))
         self._load_or_train()
 
     def _load_or_train(self) -> None:
@@ -197,6 +201,79 @@ class FakeJobDetector:
             return "Medium"
         return "Low"
 
+    @staticmethod
+    def _normalize_hf_items(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            if payload and isinstance(payload[0], list):
+                nested = payload[0]
+                return [item for item in nested if isinstance(item, dict)]
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            return [payload]
+        return []
+
+    @staticmethod
+    def _hf_risk_from_labels(items: list[dict[str, Any]]) -> float | None:
+        if not items:
+            return None
+
+        scored: list[tuple[str, float]] = []
+        for item in items:
+            label = str(item.get("label") or "").strip().lower()
+            try:
+                score = float(item.get("score") or 0.0)
+            except (TypeError, ValueError):
+                score = 0.0
+            scored.append((label, max(0.0, min(1.0, score))))
+
+        if not scored:
+            return None
+
+        risky_tokens = ("fake", "scam", "fraud", "label_1", "negative")
+        safe_tokens = ("real", "legit", "genuine", "label_0", "positive")
+
+        risk_score = 0.0
+        for label, score in scored:
+            if any(token in label for token in risky_tokens):
+                risk_score = max(risk_score, score)
+            elif any(token in label for token in safe_tokens):
+                risk_score = max(risk_score, 1.0 - score)
+
+        if risk_score > 0:
+            return round(risk_score * 100, 2)
+
+        # Fallback if labels are unknown: use top score as risk signal.
+        best_score = max(score for _, score in scored)
+        return round(best_score * 100, 2)
+
+    def _hugging_face_probability(self, text: str) -> tuple[float | None, str | None]:
+        if not self.hf_model_id or not self.hf_api_token:
+            return None, "Hugging Face model/token not configured."
+
+        endpoint = f"https://api-inference.huggingface.co/models/{self.hf_model_id}"
+        headers = {
+            "Authorization": f"Bearer {self.hf_api_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "inputs": text[:3500],
+            "options": {"wait_for_model": True},
+        }
+
+        try:
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=self.hf_timeout_seconds)
+            if response.status_code >= 400:
+                return None, f"Hugging Face API returned {response.status_code}."
+
+            data = response.json()
+            items = self._normalize_hf_items(data)
+            probability = self._hf_risk_from_labels(items)
+            if probability is None:
+                return None, "Hugging Face output was not in expected format."
+            return probability, None
+        except Exception as exc:
+            return None, f"Hugging Face request failed: {exc}"
+
     def analyze(self, job_url: str = "", fallback_text: str = "") -> dict[str, Any]:
         if not job_url and not fallback_text:
             raise ValueError("Please provide a job URL or job text for analysis.")
@@ -220,7 +297,14 @@ class FakeJobDetector:
 
         features = extract_features(source_text, job_url=job_url)
         vector = np.array([[features[name] for name in self.feature_names]], dtype=float)
-        ml_probability = float(self.model.predict_proba(vector)[0][1] * 100)
+        local_ml_probability = float(self.model.predict_proba(vector)[0][1] * 100)
+        hf_probability, hf_warning = self._hugging_face_probability(source_text)
+        if hf_probability is not None:
+            ml_probability = (local_ml_probability * 0.6) + (hf_probability * 0.4)
+            ml_source = "huggingface+local"
+        else:
+            ml_probability = local_ml_probability
+            ml_source = "local"
         rule_risk_score = self._rule_based_risk_score(features)
 
         scam_probability = (ml_probability * 0.55) + (rule_risk_score * 0.45)
@@ -249,6 +333,10 @@ class FakeJobDetector:
             "job_url": job_url,
             "scam_probability": scam_probability,
             "ml_probability": round(ml_probability, 2),
+            "local_ml_probability": round(local_ml_probability, 2),
+            "hf_probability": round(hf_probability, 2) if hf_probability is not None else None,
+            "ml_source": ml_source,
+            "hf_model_id": self.hf_model_id or None,
             "rule_risk_score": round(rule_risk_score, 2),
             "risk_level": self._risk_level(scam_probability),
             "red_flags": red_flags,
@@ -261,4 +349,5 @@ class FakeJobDetector:
             "model_metrics": self.model_metrics,
             "preview": source_text[:450],
             "fetch_warning": fetch_warning,
+            "hf_warning": hf_warning,
         }

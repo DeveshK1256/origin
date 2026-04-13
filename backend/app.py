@@ -4,9 +4,10 @@ import logging
 import os
 from typing import Any
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 
+from auth import auth_status, init_auth, verify_request
 from database import (
     db_is_ready,
     init_db,
@@ -15,6 +16,7 @@ from database import (
     save_job_analysis,
     save_resume_ai_generation,
     save_resume_analysis,
+    storage_status,
 )
 from services.fake_job_detector import FakeJobDetector
 from services.file_extractors import (
@@ -42,12 +44,46 @@ except Exception:
     DATABASE_ENABLED = False
     logger.exception("Database initialization failed. API will continue without persistence.")
 
+AUTH_ENABLED = True
+try:
+    init_auth()
+except Exception:
+    AUTH_ENABLED = False
+    logger.exception("Auth initialization failed. API will continue with auth disabled.")
+
 
 def json_error(message: str, status_code: int = 400, details: Any = None):
     payload: dict[str, Any] = {"error": message}
     if details is not None:
         payload["details"] = details
     return jsonify(payload), status_code
+
+
+def _request_source() -> str:
+    user = getattr(g, "current_user", None)
+    user_id = ""
+    if isinstance(user, dict):
+        user_id = str(user.get("id") or "").strip()
+    if user_id:
+        return f"api:{user_id}"
+    return "api"
+
+
+@app.before_request
+def authorize_api_requests():
+    if not request.path.startswith("/api/"):
+        return None
+    if request.method == "OPTIONS":
+        return None
+    if request.path == "/api/health":
+        return None
+
+    user, error = verify_request(request.headers)
+    if error:
+        return json_error(error, status_code=401)
+
+    g.current_user = user
+    return None
 
 
 @app.route("/api/health", methods=["GET"])
@@ -60,7 +96,9 @@ def health_check():
             "database": {
                 "enabled": DATABASE_ENABLED,
                 "ready": db_is_ready() if DATABASE_ENABLED else False,
+                "provider": storage_status(),
             },
+            "auth": auth_status() if AUTH_ENABLED else {"enabled": False, "required": False, "provider": "none"},
         }
     )
 
@@ -85,7 +123,7 @@ def resume_parse():
         parsed_resume = parse_resume_text(resume_text)
         recommended_jobs = recommend_jobs_for_resume(parsed_resume, limit=6)
         record_id = save_resume_analysis(
-            source="api",
+            source=_request_source(),
             resume_filename=resume_file.filename,
             parsed_resume=parsed_resume,
             recommended_jobs=recommended_jobs,
@@ -115,7 +153,7 @@ def job_analyze():
     try:
         analysis = analyze_job_description(job_description)
         record_id = save_job_analysis(
-            source="api",
+            source=_request_source(),
             job_description=job_description,
             analysis=analysis,
             match_result=None,
@@ -169,7 +207,7 @@ def job_match():
         job_data = analyze_job_description(job_description)
         match_result = calculate_job_match(resume_data, job_data)
         record_id = save_job_analysis(
-            source="api",
+            source=_request_source(),
             job_description=job_description,
             analysis=job_data,
             match_result=match_result,
@@ -197,7 +235,7 @@ def fake_job_detect():
     try:
         result = fake_job_detector.analyze(job_url=job_url, fallback_text=job_text)
         record_id = save_fake_job_check(
-            source="api",
+            source=_request_source(),
             job_url=job_url or None,
             result=result,
         )
@@ -272,7 +310,7 @@ def resume_ai_generate():
             resume_parsed=resume_data if source_mode == "existing" else None,
         )
         record_id = save_resume_ai_generation(
-            source="api",
+            source=_request_source(),
             source_mode=source_mode,
             result=result,
         )
